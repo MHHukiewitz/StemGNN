@@ -39,3 +39,4 @@ venv.bak/
 output/
 .idea/
 test.py
+raw_data/

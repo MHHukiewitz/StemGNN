@@ -1,4 +1,5 @@
 import torch
+from torch.fft import rfft, irfft
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -14,11 +15,11 @@ class GLU(nn.Module):
 
 
 class StockBlockLayer(nn.Module):
-    def __init__(self, time_step, unit, multi_layer, stack_cnt=0):
+    def __init__(self, time_step, unit, multi_layer, backcast=False):
         super(StockBlockLayer, self).__init__()
         self.time_step = time_step
         self.unit = unit
-        self.stack_cnt = stack_cnt
+        self.does_backcast = backcast
         self.multi = multi_layer
         self.weight = nn.Parameter(
             torch.Tensor(1, 3 + 1, 1, self.time_step * self.multi,
@@ -26,10 +27,10 @@ class StockBlockLayer(nn.Module):
         nn.init.xavier_normal_(self.weight)
         self.forecast = nn.Linear(self.time_step * self.multi, self.time_step * self.multi)
         self.forecast_result = nn.Linear(self.time_step * self.multi, self.time_step)
-        if self.stack_cnt == 0:
+        self.selu = torch.nn.SELU()
+        if self.does_backcast:
             self.backcast = nn.Linear(self.time_step * self.multi, self.time_step)
         self.backcast_short_cut = nn.Linear(self.time_step, self.time_step)
-        self.relu = nn.ReLU()
         self.GLUs = nn.ModuleList()
         self.output_channel = 4 * self.multi
         for i in range(3):
@@ -67,7 +68,7 @@ class StockBlockLayer(nn.Module):
         igfted = torch.sum(igfted, dim=1)
         forecast_source = torch.sigmoid(self.forecast(igfted).squeeze(1))
         forecast = self.forecast_result(forecast_source)
-        if self.stack_cnt == 0:
+        if self.does_backcast:
             backcast_short = self.backcast_short_cut(x).squeeze(1)
             backcast_source = torch.sigmoid(self.backcast(igfted) - backcast_short)
         else:
@@ -76,28 +77,29 @@ class StockBlockLayer(nn.Module):
 
 
 class Model(nn.Module):
-    def __init__(self, units, stack_cnt, time_step, multi_layer, horizon=1, dropout_rate=0.5, leaky_rate=0.2,
+    def __init__(self, nodes, stack_cnt, window_size, multi_layer, horizon=1, dropout_rate=0.5, leaky_rate=0.2,
                  device='cpu'):
         super(Model, self).__init__()
-        self.unit = units
+        self.nodes = nodes
         self.stack_cnt = stack_cnt
-        self.unit = units
         self.alpha = leaky_rate
-        self.time_step = time_step
+        self.window_size = window_size
         self.horizon = horizon
-        self.weight_key = nn.Parameter(torch.zeros(size=(self.unit, 1)))
-        nn.init.xavier_uniform_(self.weight_key.data, gain=1.414)
-        self.weight_query = nn.Parameter(torch.zeros(size=(self.unit, 1)))
-        nn.init.xavier_uniform_(self.weight_query.data, gain=1.414)
-        self.GRU = nn.GRU(self.time_step, self.unit)
+        self.weight_key = nn.Parameter(torch.zeros(size=(self.nodes, 1)))
+        nn.init.kaiming_uniform_(self.weight_key.data, nonlinearity='leaky_relu')
+        self.weight_query = nn.Parameter(torch.zeros(size=(self.nodes, 1)))
+        nn.init.kaiming_uniform_(self.weight_query.data, nonlinearity='leaky_relu')
+        self.GRU = nn.GRU(self.window_size, self.nodes)
         self.multi_layer = multi_layer
         self.stock_block = nn.ModuleList()
         self.stock_block.extend(
-            [StockBlockLayer(self.time_step, self.unit, self.multi_layer, stack_cnt=i) for i in range(self.stack_cnt)])
+            [StockBlockLayer(self.window_size, self.nodes, self.multi_layer, backcast=(i < (self.stack_cnt - 1)))
+             for i in range(self.stack_cnt)])
         self.fc = nn.Sequential(
-            nn.Linear(int(self.time_step), int(self.time_step)),
-            nn.LeakyReLU(),
-            nn.Linear(int(self.time_step), self.horizon),
+            nn.Linear(int(self.window_size), int(self.window_size)),
+            nn.LeakyReLU(self.alpha),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(int(self.window_size), self.horizon),
         )
         self.leakyrelu = nn.LeakyReLU(self.alpha)
         self.dropout = nn.Dropout(p=dropout_rate)

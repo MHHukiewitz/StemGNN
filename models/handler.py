@@ -12,6 +12,8 @@ import os
 
 from utils.math_utils import evaluate
 
+input_columns = []
+
 
 def save_model(model, model_dir, epoch=None):
     if model_dir is None:
@@ -38,6 +40,11 @@ def load_model(model_dir, epoch=None):
     return model
 
 
+def set_columns(cols):
+    global input_columns
+    input_columns = cols
+
+
 def inference(model, dataloader, device, node_cnt, window_size, horizon):
     forecast_set = []
     target_set = []
@@ -54,7 +61,7 @@ def inference(model, dataloader, device, node_cnt, window_size, horizon):
                 if len_model_output == 0:
                     raise Exception('Get blank inference result')
                 inputs[:, :window_size - len_model_output, :] = inputs[:, len_model_output:window_size,
-                                                                   :].clone()
+                                                                :].clone()
                 inputs[:, window_size - len_model_output:, :] = forecast_result.clone()
                 forecast_steps[:, step:min(horizon - step, len_model_output) + step, :] = \
                     forecast_result[:, :min(horizon - step, len_model_output), :].detach().cpu().numpy()
@@ -89,12 +96,16 @@ def validate(model, dataloader, device, normalize_method, statistic,
         forcasting_2d = forecast[:, step_to_print, :]
         forcasting_2d_target = target[:, step_to_print, :]
 
-        np.savetxt(f'{result_file}/target.csv', forcasting_2d_target, delimiter=",")
-        np.savetxt(f'{result_file}/predict.csv', forcasting_2d, delimiter=",")
-        np.savetxt(f'{result_file}/predict_abs_error.csv',
-                   np.abs(forcasting_2d - forcasting_2d_target), delimiter=",")
+        header = ','.join(input_columns)
+        np.savetxt(f'{result_file}/target.csv', forcasting_2d_target,
+                   delimiter=",", fmt="%.5f", header=header, comments='')
+        np.savetxt(f'{result_file}/predict.csv', forcasting_2d,
+                   delimiter=",", fmt="%.5f", header=header, comments='')
+        np.savetxt(f'{result_file}/predict_abs_error.csv', np.abs(forcasting_2d - forcasting_2d_target),
+                   delimiter=",", fmt="%.5f", header=header, comments='')
         np.savetxt(f'{result_file}/predict_ape.csv',
-                   np.abs((forcasting_2d - forcasting_2d_target) / forcasting_2d_target), delimiter=",")
+                   np.abs((forcasting_2d - forcasting_2d_target) / forcasting_2d_target),
+                   delimiter=",", fmt="%.5f", header=header, comments='')
 
     return dict(mae=score[1], mae_node=score_by_node[1], mape=score[0], mape_node=score_by_node[0],
                 rmse=score[2], rmse_node=score_by_node[2])
@@ -102,7 +113,10 @@ def validate(model, dataloader, device, normalize_method, statistic,
 
 def train(train_data, valid_data, args, result_file):
     node_cnt = train_data.shape[1]
-    model = Model(node_cnt, 2, args.window_size, args.multi_layer, horizon=args.horizon)
+    model = Model(node_cnt, args.stack_cnt, args.window_size, args.multi_layer,
+                  horizon=args.horizon,
+                  dropout_rate=args.dropout_rate,
+                  leaky_rate=args.leakyrelu_rate)
     model.to(args.device)
     if len(train_data) == 0:
         raise Exception('Cannot organize enough training data')
@@ -137,7 +151,13 @@ def train(train_data, valid_data, args, result_file):
                                          num_workers=0)
     valid_loader = torch_data.DataLoader(valid_set, batch_size=args.batch_size, shuffle=False, num_workers=0)
 
-    forecast_loss = nn.MSELoss(reduction='mean').to(args.device)
+    mse_loss = nn.MSELoss(reduction='mean').to(args.device)
+
+    def sign_loss(output, target):
+        loss = torch.where((torch.abs(target) > torch.abs(output)) & (torch.abs(target) > 0.001) & (torch.abs(target) < 1),
+                           5 * mse_loss(output, target),
+                                         mse_loss(output, target))
+        return loss.mean()
 
     total_params = 0
     for name, parameter in model.named_parameters():
@@ -159,7 +179,7 @@ def train(train_data, valid_data, args, result_file):
             target = target.to(args.device)
             model.zero_grad()
             forecast, _ = model(inputs)
-            loss = forecast_loss(forecast, target)
+            loss = sign_loss(forecast, target)
             cnt += 1
             loss.backward()
             my_optim.step()
@@ -167,15 +187,16 @@ def train(train_data, valid_data, args, result_file):
         print('| end of epoch {:3d} | time: {:5.2f}s | train_total_loss {:5.4f}'.format(epoch, (
                 time.time() - epoch_start_time), loss_total / cnt))
         save_model(model, result_file, epoch)
-        if (epoch+1) % args.exponential_decay_step == 0:
+        if (epoch + 1) % args.exponential_decay_step == 0:
             my_lr_scheduler.step()
         if (epoch + 1) % args.validate_freq == 0:
             is_best_for_now = False
             print('------ validate on data: VALIDATE ------')
+            validate_file = os.path.join(result_file, f'{epoch + 1}')
             performance_metrics = \
                 validate(model, valid_loader, args.device, args.norm_method, normalize_statistic,
                          node_cnt, args.window_size, args.horizon,
-                         result_file=result_file)
+                         result_file=validate_file)
             if best_validate_mae > performance_metrics['mae']:
                 best_validate_mae = performance_metrics['mae']
                 is_best_for_now = True
@@ -192,7 +213,7 @@ def train(train_data, valid_data, args, result_file):
 
 
 def test(test_data, args, result_train_file, result_test_file):
-    with open(os.path.join(result_train_file, 'norm_stat.json'),'r') as f:
+    with open(os.path.join(result_train_file, 'norm_stat.json'), 'r') as f:
         normalize_statistic = json.load(f)
     model = load_model(result_train_file)
     node_cnt = test_data.shape[1]
@@ -201,7 +222,7 @@ def test(test_data, args, result_train_file, result_test_file):
     test_loader = torch_data.DataLoader(test_set, batch_size=args.batch_size, drop_last=False,
                                         shuffle=False, num_workers=0)
     performance_metrics = validate(model, test_loader, args.device, args.norm_method, normalize_statistic,
-                      node_cnt, args.window_size, args.horizon,
-                      result_file=result_test_file)
+                                   node_cnt, args.window_size, args.horizon,
+                                   result_file=result_test_file)
     mae, mape, rmse = performance_metrics['mae'], performance_metrics['mape'], performance_metrics['rmse']
     print('Performance on test set: MAPE: {:5.2f} | MAE: {:5.2f} | RMSE: {:5.4f}'.format(mape, mae, rmse))

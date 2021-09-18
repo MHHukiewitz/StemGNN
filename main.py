@@ -2,7 +2,7 @@ import os
 import torch
 os.environ['CUDA_VISIBLE_DEVICES'] = '0,1'
 from datetime import datetime
-from models.handler import train, test
+from models.handler import train, test, set_columns
 import argparse
 import pandas as pd
 
@@ -18,6 +18,7 @@ parser.add_argument('--test_length', type=float, default=1)
 parser.add_argument('--epoch', type=int, default=50)
 parser.add_argument('--lr', type=float, default=1e-4)
 parser.add_argument('--multi_layer', type=int, default=5)
+parser.add_argument('--stack_cnt', type=int, default=2)
 parser.add_argument('--device', type=str, default='cpu')
 parser.add_argument('--validate_freq', type=int, default=1)
 parser.add_argument('--batch_size', type=int, default=32)
@@ -27,7 +28,7 @@ parser.add_argument('--early_stop', type=bool, default=False)
 parser.add_argument('--exponential_decay_step', type=int, default=5)
 parser.add_argument('--decay_rate', type=float, default=0.5)
 parser.add_argument('--dropout_rate', type=float, default=0.5)
-parser.add_argument('--leakyrelu_rate', type=int, default=0.2)
+parser.add_argument('--leakyrelu_rate', type=float, default=0.2)
 
 
 args = parser.parse_args()
@@ -39,6 +40,8 @@ if not os.path.exists(result_train_file):
     os.makedirs(result_train_file)
 if not os.path.exists(result_test_file):
     os.makedirs(result_test_file)
+
+set_columns(pd.read_csv(data_file).columns)
 data = pd.read_csv(data_file).values
 
 # split data
@@ -49,7 +52,7 @@ train_data = data[:int(train_ratio * len(data))]
 valid_data = data[int(train_ratio * len(data)):int((train_ratio + valid_ratio) * len(data))]
 test_data = data[int((train_ratio + valid_ratio) * len(data)):]
 
-torch.manual_seed(0)
+#torch.manual_seed(0)
 if __name__ == '__main__':
     if args.train:
         try:
