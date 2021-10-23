@@ -18,11 +18,18 @@ def get_sign_accuracy(target, predict, symbol):
     print(f"{symbol}: {acc_df['hit'].mean():.3f}")
 
 
-def analyze_sign_accuracy(name, epoch, test=False):
+def analyze_sign_accuracy(name, epoch=None, test=False):
     if test:
         target = pd.read_csv(f"output/{name}/test/target.csv")
         predict = pd.read_csv(f"output/{name}/test/predict.csv")
+        if epoch is not None:
+            val_target = pd.read_csv(f"output/{name}/train/{epoch}/target.csv")
+            val_predict = pd.read_csv(f"output/{name}/train/{epoch}/predict.csv")
+            target = pd.concat([val_target, target], axis=0).reset_index()
+            predict = pd.concat([val_predict, predict], axis=0).reset_index()
     else:
+        if epoch is None:
+            epoch = 1
         target = pd.read_csv(f"output/{name}/train/{epoch}/target.csv")
         predict = pd.read_csv(f"output/{name}/train/{epoch}/predict.csv")
     if 'returnsUSD' not in target.columns:
@@ -89,8 +96,14 @@ def normalize(df):
 # name = "crypto_vola_244664"  # mit returnsUSD
 # name = "crypto_vola_163386"  # 'BTC', 'ETH', 'BNB', 'MATIC', 'ETC', 'ADA'
 #name = "crypto_vola_209712"  # 'BTC, 'ETH'
-name = "crypto_vola_163386"
-real, predict, total = analyze_sign_accuracy(name, 1, test=False)
+#name = "crypto_vola_279616"  # 'BTC, 'ETH'
+#name = "crypto_vola_228666"  # with eth gas
+name = "crypto_vola_219230"  # with eth gas fee $
+#name = "crypto_vola_121900"  # all of dem
+#name = "crypto_vola_592674"
+#name = "crypto_vola_209265"  # without eth gas
+#name = "crypto_vola_163386"
+real, predict, total = analyze_sign_accuracy(name, 30, test=True)
 
 print(f"\nPORTFOLIO TEST -----------")
 base_pf = DataFrame(data=np.zeros((len(real), len(real.columns))), columns=[s[7:] for s in real.columns])
@@ -130,6 +143,7 @@ def get_result(pf):
 
 _, _, _, even_pf = simulate_even_pf(base_pf.copy())
 pf = base_pf.copy()
+start_capital = base_pf.iloc[0].sum()
 
 
 def simulate_managed_pf(pf: DataFrame, strategy="long", max_leverage=1):
@@ -163,7 +177,7 @@ alloc = even_pf.copy()
 #    _, _, _, l_pf = simulate_managed_pf(base_pf.copy(), strategy="long", max_leverage=i+1)
 #    alloc = alloc.join(l_pf, rsuffix=f'_L{i+1}')
 
-for i in range(3):
+for i in range(0, 5, 2):
     _, _, _, ls_pf = simulate_managed_pf(base_pf.copy(), strategy="long/short", max_leverage=i+1)
     alloc = alloc.join(ls_pf, rsuffix=f'_M{i+1}')
 
@@ -172,11 +186,12 @@ for i in range(3):
 #    alloc = alloc.join(ls_pf, rsuffix=f'_S{i+1}')
 
 plots = alloc[reversed([c for c in alloc.columns if 'sum' in c])]
+plots = plots.applymap(lambda x: x / start_capital)
 #plots[[c for c in plots.columns if 'sum' == c or 'L' in c]].plot.line(
 #    title=f'LONG {name}: {len(pf)/24: .1f} days', logy=False, colormap='viridis', legend=None)
 #plots[[c for c in plots.columns if 'sum' == c or 'S' in c]].plot.line(
 #    title=f'SHORT {name}: {len(pf)/24: .1f} days', logy=False, colormap='inferno', legend=None)
 plots[[c for c in plots.columns if 'sum' == c or 'M' in c]].plot.line(
-    title=f'MIXED {name}: {len(pf)/24: .1f} days', logy=False, colormap='cividis', legend=None)
+    title=f'MIXED {name}: {len(pf)/24: .1f} days', logy=True, colormap='cividis', legend=None)
 plt.show()
 print("DONE")

@@ -1,5 +1,4 @@
 import torch
-from torch.fft import rfft, irfft
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -15,15 +14,20 @@ class GLU(nn.Module):
 
 
 class StockBlockLayer(nn.Module):
-    def __init__(self, time_step, unit, multi_layer, backcast=False):
+    def __init__(self, time_step, nodes, multi_layer, backcast=False):
         super(StockBlockLayer, self).__init__()
         self.time_step = time_step
-        self.unit = unit
+        self.nodes = nodes
         self.does_backcast = backcast
         self.multi = multi_layer
+        self.conv_kernel = (4, 3)
+        self.conv_real = nn.Conv2d(self.nodes, self.nodes, self.conv_kernel, padding=(0, 1))
+        self.rev_conv_real = nn.ConvTranspose2d(self.nodes, self.nodes, self.conv_kernel, padding=(0, 1))
+        self.conv_imag = nn.Conv2d(self.nodes, self.nodes, self.conv_kernel, padding=(0, 1))
+        self.rev_conv_imag = nn.ConvTranspose2d(self.nodes, self.nodes, self.conv_kernel, padding=(0, 1))
         self.weight = nn.Parameter(
-            torch.Tensor(1, 3 + 1, 1, self.time_step * self.multi,
-                         self.multi * self.time_step))  # [K+1, 1, in_c, out_c]
+            torch.Tensor(1, self.multi * self.time_step, self.multi * self.time_step))
+        # [K+1, 1, in_c, out_c]
         nn.init.xavier_normal_(self.weight)
         self.forecast = nn.Linear(self.time_step * self.multi, self.time_step * self.multi)
         self.forecast_result = nn.Linear(self.time_step * self.multi, self.time_step)
@@ -32,45 +36,46 @@ class StockBlockLayer(nn.Module):
             self.backcast = nn.Linear(self.time_step * self.multi, self.time_step)
         self.backcast_short_cut = nn.Linear(self.time_step, self.time_step)
         self.GLUs = nn.ModuleList()
-        self.output_channel = 4 * self.multi
         for i in range(3):
             if i == 0:
-                self.GLUs.append(GLU(self.time_step * 4, self.time_step * self.output_channel))
-                self.GLUs.append(GLU(self.time_step * 4, self.time_step * self.output_channel))
+                self.GLUs.append(GLU(self.time_step, self.time_step * self.multi))
+                self.GLUs.append(GLU(self.time_step, self.time_step * self.multi))
             elif i == 1:
-                self.GLUs.append(GLU(self.time_step * self.output_channel, self.time_step * self.output_channel))
-                self.GLUs.append(GLU(self.time_step * self.output_channel, self.time_step * self.output_channel))
+                self.GLUs.append(GLU(self.time_step * self.multi, self.time_step * self.multi))
+                self.GLUs.append(GLU(self.time_step * self.multi, self.time_step * self.multi))
             else:
-                self.GLUs.append(GLU(self.time_step * self.output_channel, self.time_step * self.output_channel))
-                self.GLUs.append(GLU(self.time_step * self.output_channel, self.time_step * self.output_channel))
+                self.GLUs.append(GLU(self.time_step * self.multi, self.time_step * self.multi))
+                self.GLUs.append(GLU(self.time_step * self.multi, self.time_step * self.multi))
 
     def spe_seq_cell(self, input):
         batch_size, k, input_channel, node_cnt, time_step = input.size()
-        input = input.view(batch_size, -1, node_cnt, time_step)
-        ffted = torch.rfft(input, 1, onesided=False)
-        real = ffted[..., 0].permute(0, 2, 1, 3).contiguous().reshape(batch_size, node_cnt, -1)
-        img = ffted[..., 1].permute(0, 2, 1, 3).contiguous().reshape(batch_size, node_cnt, -1)
+        input = input.view(batch_size, k, node_cnt, time_step)
+        ffted = torch.fft.fft(input, norm="ortho")
+        ffted = ffted.permute(0, 2, 1, 3).contiguous().reshape(batch_size, node_cnt, k, time_step)
+        real = self.conv_real(ffted.real).reshape(batch_size, node_cnt, -1)
+        imag = self.conv_imag(ffted.imag).reshape(batch_size, node_cnt, -1)
         for i in range(3):
             real = self.GLUs[i * 2](real)
-            img = self.GLUs[2 * i + 1](img)
-        real = real.reshape(batch_size, node_cnt, 4, -1).permute(0, 2, 1, 3).contiguous()
-        img = img.reshape(batch_size, node_cnt, 4, -1).permute(0, 2, 1, 3).contiguous()
-        time_step_as_inner = torch.cat([real.unsqueeze(-1), img.unsqueeze(-1)], dim=-1)
-        iffted = torch.irfft(time_step_as_inner, 1, onesided=False)
+            imag = self.GLUs[2 * i + 1](imag)
+        #real = self.rev_conv_real(real.reshape(batch_size, node_cnt, 1, -1))
+        #imag = self.rev_conv_imag(imag.reshape(batch_size, node_cnt, 1, -1))
+        #real = real.reshape(batch_size, node_cnt, -1).permute(0, 2, 1, 3).contiguous()
+        #imag = imag.reshape(batch_size, node_cnt, -1).permute(0, 2, 1, 3).contiguous()
+        time_step_as_inner = torch.complex(real, imag)
+        iffted = torch.fft.ifft(time_step_as_inner, norm="ortho").real
         return iffted
 
-    def forward(self, x, mul_L):
-        mul_L = mul_L.unsqueeze(1)
-        x = x.unsqueeze(1)
-        gfted = torch.matmul(mul_L, x)
-        gconv_input = self.spe_seq_cell(gfted).unsqueeze(2)
+    def forward(self, x, cheb_polynomial):
+        cheb_polynomial = cheb_polynomial.unsqueeze(1)
+        gfted = torch.matmul(cheb_polynomial, x.unsqueeze(1))
+        gconv_input = self.spe_seq_cell(gfted)
         igfted = torch.matmul(gconv_input, self.weight)
-        igfted = torch.sum(igfted, dim=1)
-        forecast_source = torch.sigmoid(self.forecast(igfted).squeeze(1))
+
+        forecast_source = torch.sigmoid(self.forecast(igfted))
         forecast = self.forecast_result(forecast_source)
         if self.does_backcast:
             backcast_short = self.backcast_short_cut(x).squeeze(1)
-            backcast_source = torch.sigmoid(self.backcast(igfted) - backcast_short)
+            backcast_source = torch.sigmoid(self.backcast(igfted) - backcast_short).unsqueeze(1)
         else:
             backcast_source = None
         return forecast, backcast_source

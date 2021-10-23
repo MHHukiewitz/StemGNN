@@ -1,5 +1,6 @@
 from datetime import datetime
 
+import pandas as pd
 from pandas import DataFrame, Series
 import numpy as np
 
@@ -18,6 +19,14 @@ def clean_time_duplicates(df: DataFrame):
     df.drop_duplicates(subset=['date'], inplace=True)
 
     print(f"clean_time_duplicates() reduced data to {len(df)} entries")
+
+
+def clean_eth_scan_data(df: DataFrame):
+    for i in range(len(df)):
+        df.at[i, 'date'] = datetime.strptime(df.date.iloc[i], '%m/%d/%Y')
+    df.drop_duplicates(subset=['date'], inplace=True)
+
+    print(f"clean_eth_scan_data() reduced data to {len(df)} entries")
 
 
 def log_returns(series: Series):
