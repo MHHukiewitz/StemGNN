@@ -20,7 +20,7 @@ def generate_csv():
     df["date"] = pd.date_range(freq='h', start=datetime(day=17, month=7, year=2010), end=datetime.now())
     df.set_index('date', inplace=True)
     #projects = ['BTC', 'ETH']
-    projects = ['BTC', 'ETH', 'BNB', 'ADA', 'ETC', 'LTC', 'LINK', 'MATIC', 'AAVE', 'DOT', 'FIL', 'MKR', 'NEO', 'SOL', 'XMR']
+    projects = ['BTC', 'ETH', 'BNB', 'ADA', 'ETC', 'LTC', 'LINK', 'MATIC', 'DOT', 'FIL', 'MKR', 'NEO', 'SOL', 'XMR']
     for project in projects:
         data = pd.read_csv(f"raw_data/hour/Binance_{project}USDT_1h.csv")
         print(f"Got {len(data)} entries for {project}")
@@ -70,9 +70,9 @@ def generate_csv():
                              'vola': f'vola{project}', 'midprice': f'midprice{project}'}, inplace=True)
         df = df.join(data)
         if project == 'BTC':
-            df.dropna(axis=1, inplace=True)
+            df.dropna(axis=0, inplace=True)
 
-    df.fillna(value=0.0, axis=0, inplace=True)
+    df.fillna(value=0.0, inplace=True)
     df.sort_index(inplace=True, ascending=True)
     df.reset_index(drop=True, inplace=True)
     path = f"dataset/crypto_vola_{df.size}.csv"
