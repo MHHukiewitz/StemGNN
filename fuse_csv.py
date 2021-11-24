@@ -20,9 +20,9 @@ def generate_csv():
     df["date"] = pd.date_range(freq='h', start=datetime(day=17, month=7, year=2010), end=datetime.now())
     df.set_index('date', inplace=True)
     #projects = ['BTC', 'ETH']
-    projects = ['BTC', 'ETH', 'BNB', 'ADA', 'ETC', 'LTC', 'LINK', 'MATIC', 'DOT', 'FIL', 'MKR', 'NEO', 'SOL', 'XMR']
+    projects = ['BTC', 'ETH', 'LTC', 'ADA', 'LINK', 'XMR', 'NEO', 'MATIC', 'ETC', 'BNB']
     for project in projects:
-        data = pd.read_csv(f"raw_data/hour/Binance_{project}USDT_1h.csv")
+        data = pd.read_csv(f"raw_data/hour/Binance_{project}USDT_1h.csv", header=1)
         print(f"Got {len(data)} entries for {project}")
         clean_time_duplicates(data)
 
@@ -41,28 +41,27 @@ def generate_csv():
         data['Volume USDT'].interpolate("cubic", inplace=True)
         data['cashvol'] = log_returns(data['Volume USDT'])
 
-        if project == 'ETH':
-            gas_data = pd.read_csv(f"raw_data/export-AvgGasPrice.csv")
-            print(f"Got {len(gas_data)} entries for ETH gas data")
-            clean_eth_scan_data(gas_data)
+        #if project == 'ETH':
+        #    gas_data = pd.read_csv(f"raw_data/export-AvgGasPrice.csv")
+        #    print(f"Got {len(gas_data)} entries for ETH gas data")
+        #    clean_eth_scan_data(gas_data)
 
-            gas_data.drop(columns='unix', inplace=True)
-            gas_data.set_index('date', inplace=True)
-            gas_data.sort_index(inplace=True, ascending=True)
-            # Converting the index as date
-            gas_data.index = pd.to_datetime(gas_data.index)
-            gas_data = gas_data.resample('1h').ffill()
-            data = data.join(gas_data).ffill()
-            data['txncostETH'] = (data['Value (Wei)'] / 1e18) * 65000 * data['midprice']
-            data = data[['returns', 'vola', 'cashvol', 'txncostETH']]
-        else:
-            data = data[['returns', 'vola', 'cashvol']]
+        #    gas_data.drop(columns='unix', inplace=True)
+        #    gas_data.set_index('date', inplace=True)
+        #    gas_data.sort_index(inplace=True, ascending=True)
+        #    # Converting the index as date
+        #    gas_data.index = pd.to_datetime(gas_data.index)
+        #    gas_data = gas_data.resample('1h').ffill()
+        #    data = data.join(gas_data).ffill()
+        #    data['txncostETH'] = (data['Value (Wei)'] / 1e18) * 65000 * data['midprice']
+        #    data['txncostETH'] = log_returns(data['txncostETH'])
+        #    data = data[['returns', 'vola', 'cashvol', 'txncostETH']]
+        #else:
+        data = data[['returns', 'vola', 'cashvol']]
 
-        print(len(data))
         data = data.dropna(axis=0)
         data.drop(data.tail(1).index, inplace=True)
         data.drop(data.head(1).index, inplace=True)
-        print(len(data))
         #data['vola'] = normalize_to_other(data['vola'], data['returns'])
         #data['cashvol'] = normalize_to_other(data['cashvol'], data['returns'])
 
@@ -72,6 +71,7 @@ def generate_csv():
         if project == 'BTC':
             df.dropna(axis=0, inplace=True)
 
+    print(df.isna().sum().sum() / df.size)
     df.fillna(value=0.0, inplace=True)
     df.sort_index(inplace=True, ascending=True)
     df.reset_index(drop=True, inplace=True)

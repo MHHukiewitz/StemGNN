@@ -60,7 +60,8 @@ def analyze_sign_accuracy(name, epoch=None, test=False):
     return target[log_ret_columns], predict[log_ret_columns], total
 
 
-def sigmoid(x, w=0.00001):
+def sigmoid(x, w=1e-7):
+    """High values of w lead to high volumes, as the model becomes more sensitive to predictions."""
     return x*(w+x**2)**-.5
 
 
@@ -102,18 +103,18 @@ def normalize(df):
 
 taker_fees = 0.0005
 maker_fees = -0.0004
-# name = "crypto_vola_244664"  # mit returnsUSD
-# name = "crypto_vola_163386"  # 'BTC', 'ETH', 'BNB', 'MATIC', 'ETC', 'ADA'
+name = "crypto_vola_645318"  # 'BTC', 'ETH', 'BNB', 'MATIC', 'ETC', 'ADA'
+name = "crypto_vola_1154471"  # all of dem with gas fee abs
 #name = "crypto_vola_209712"  # 'BTC, 'ETH'
 #name = "crypto_vola_279616"  # 'BTC, 'ETH'
 #name = "crypto_vola_228666"  # with eth gas
 #name = "crypto_vola_219230"  # with eth gas fee $
-name = "crypto_vola_1505742"  # all of dem with full BTC history
+#name = "crypto_vola_1505742"  # all of dem with full BTC history
 #name = "crypto_vola_121900"  # all of dem
 #name = "crypto_vola_592674"
 #name = "crypto_vola_209265"  # without eth gas
 #name = "crypto_vola_163386"
-real, predict, total = analyze_sign_accuracy(name, 1, test=True)
+real, predict, total = analyze_sign_accuracy(name, 1, test=False)
 
 print(f"\nPORTFOLIO TEST -----------")
 base_pf = DataFrame(data=np.zeros((len(real), len(real.columns))), columns=[s[7:] for s in real.columns])
@@ -168,8 +169,8 @@ def simulate_managed_pf(pf: DataFrame, strategy="long", max_leverage=1):
     norm_predict = pred_to_distribution(predict[log_ret_columns].copy(), strategy=strategy, max_leverage=max_leverage)
     trades = DataFrame()
     for i in range(1, len(pf)):
-        # rebalance according to prediction
         pre_rebalance = pf.loc[i - 1, crypto_cols]
+        # rebalance according to prediction
         pf.at[i - 1, pf.columns] = pf.iloc[i - 1][pf.columns].sum() * norm_predict.iloc[i - 1].values
         trades.at[i - 1, crypto_cols] = pre_rebalance - pf.loc[i - 1, crypto_cols]
         # apply returns
@@ -188,13 +189,13 @@ def simulate_managed_pf(pf: DataFrame, strategy="long", max_leverage=1):
 alloc = even_pf.copy()
 
 
-#for i in range(5):
-#    _, _, _, l_pf = simulate_managed_pf(base_pf.copy(), strategy="long", max_leverage=i+1)
-#    alloc = alloc.join(l_pf, rsuffix=f'_L{i+1}')
+#for i in [1, 3, 5, 10]:
+#    _, _, _, l_pf = simulate_managed_pf(base_pf.copy(), strategy="long", max_leverage=i)
+#    alloc = alloc.join(l_pf, rsuffix=f'_L{i}')
 
-for i in range(0, 5, 2):
-    _, _, _, ls_pf = simulate_managed_pf(base_pf.copy(), strategy="long/short", max_leverage=i+1)
-    alloc = alloc.join(ls_pf, rsuffix=f'_M{i+1}')
+for i in [1, 3, 5, 10]:
+    _, _, _, ls_pf = simulate_managed_pf(base_pf.copy(), strategy="long/short", max_leverage=i)
+    alloc = alloc.join(ls_pf, rsuffix=f'_M{i}')
 
 #for i in range(5):
 #    _, _, _, ls_pf = simulate_managed_pf(base_pf.copy(), strategy="short", max_leverage=i+1)
@@ -203,7 +204,7 @@ for i in range(0, 5, 2):
 plots = alloc[reversed([c for c in alloc.columns if 'sum' in c])]
 plots = plots.applymap(lambda x: x / start_capital)
 #plots[[c for c in plots.columns if 'sum' == c or 'L' in c]].plot.line(
-#    title=f'LONG {name}: {len(pf)/24: .1f} days', logy=False, colormap='viridis', legend=None)
+#    title=f'LONG {name}: {len(pf)/24: .1f} days', logy=True, colormap='viridis', legend=None)
 #plots[[c for c in plots.columns if 'sum' == c or 'S' in c]].plot.line(
 #    title=f'SHORT {name}: {len(pf)/24: .1f} days', logy=False, colormap='inferno', legend=None)
 plots[[c for c in plots.columns if 'sum' == c or 'M' in c]].plot.line(
